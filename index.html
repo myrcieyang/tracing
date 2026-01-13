@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR 绘画描摹助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        #app-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #camera-view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #overlay-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none; /* 初始允许穿透 */
+        }
+
+        #overlay-img {
+            max-width: 100%;
+            max-height: 100%;
+            transition: opacity 0.1s;
+            user-select: none;
+            -webkit-user-drag: none;
+            touch-action: none;
+        }
+
+        .ui-layer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            z-index: 10;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            padding: 20px;
+            pointer-events: auto;
+            transition: transform 0.3s ease;
+        }
+
+        .ui-hidden {
+            transform: translateY(100%);
+        }
+
+        .control-group {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            background: #444;
+            border-radius: 5px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #lock-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 20;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 50%;
+        }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- 锁屏按钮 -->
+    <button id="lock-btn" class="flex items-center justify-center">
+        <svg id="lock-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    </button>
+
+    <!-- 视频背景层 -->
+    <video id="camera-view" autoplay playsinline muted></video>
+
+    <!-- 图片叠加层 -->
+    <div id="overlay-container">
+        <img id="overlay-img" src="" class="hidden" alt="参考图">
+    </div>
+
+    <!-- UI控制层 -->
+    <div id="controls" class="ui-layer">
+        <div class="control-group">
+            <div class="flex items-center justify-between mb-4">
+                <span class="text-sm font-medium">参考图设置</span>
+                <label class="bg-blue-600 px-3 py-1 rounded-full text-xs cursor-pointer">
+                    上传图片
+                    <input type="file" id="file-input" class="hidden" accept="image/*">
+                </label>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>透明度</span>
+                        <span id="opacity-val">50%</span>
+                    </div>
+                    <input type="range" id="opacity-slider" min="0" max="100" value="50">
+                </div>
+                
+                <div>
+                    <div class="flex justify-between text-xs mb-1">
+                        <span>缩放</span>
+                        <span id="scale-val">100%</span>
+                    </div>
+                    <input type="range" id="scale-slider" min="10" max="300" value="100">
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-2">
+            <button id="flip-btn" class="flex-1 bg-white/10 backdrop-blur-md py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8"/><path d="M2 12h20"/><path d="m17 21 5-5-5-5"/><path d="m17 3 5 5-5 5"/></svg>
+                水平翻转
+            </button>
+            <button id="reset-btn" class="flex-1 bg-white/10 backdrop-blur-md py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                重置位置
+            </button>
+        </div>
+        
+        <p class="text-[10px] text-center mt-4 text-white/40">提示：双指或拖动图片可调整位置。点击右上角锁定界面。</p>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('camera-view');
+    const overlayImg = document.getElementById('overlay-img');
+    const fileInput = document.getElementById('file-input');
+    const opacitySlider = document.getElementById('opacity-slider');
+    const scaleSlider = document.getElementById('scale-slider');
+    const flipBtn = document.getElementById('flip-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const lockBtn = document.getElementById('lock-btn');
+    const controls = document.getElementById('controls');
+    
+    let isFlipped = false;
+    let isLocked = false;
+    let scale = 1;
+    let posX = 0;
+    let posY = 0;
+
+    // 初始化摄像头
+    async function startCamera() {
+        try {
+            const constraints = {
+                video: {
+                    facingMode: { ideal: "environment" },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: false
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+        } catch (err) {
+            console.error("摄像头访问失败: ", err);
+            const message = document.createElement('div');
+            message.className = 'absolute inset-0 flex items-center justify-center bg-black/80 z-50 p-10 text-center';
+            message.innerHTML = '无法访问摄像头。<br>请确保使用了 HTTPS 协议并授予了摄像头权限。';
+            document.body.appendChild(message);
+        }
+    }
+
+    // 处理图片上传
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                overlayImg.src = event.target.result;
+                overlayImg.classList.remove('hidden');
+                resetTransform();
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // 透明度调节
+    opacitySlider.addEventListener('input', (e) => {
+        const val = e.target.value;
+        overlayImg.style.opacity = val / 100;
+        document.getElementById('opacity-val').innerText = val + '%';
+    });
+
+    // 缩放调节
+    scaleSlider.addEventListener('input', (e) => {
+        scale = e.target.value / 100;
+        updateTransform();
+        document.getElementById('scale-val').innerText = e.target.value + '%';
+    });
+
+    // 翻转
+    flipBtn.addEventListener('click', () => {
+        isFlipped = !isFlipped;
+        updateTransform();
+    });
+
+    // 重置
+    resetBtn.addEventListener('click', resetTransform);
+
+    function resetTransform() {
+        scale = 1;
+        posX = 0;
+        posY = 0;
+        isFlipped = false;
+        scaleSlider.value = 100;
+        document.getElementById('scale-val').innerText = '100%';
+        updateTransform();
+    }
+
+    function updateTransform() {
+        overlayImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale}) scaleX(${isFlipped ? -1 : 1})`;
+    }
+
+    // 锁定逻辑
+    lockBtn.addEventListener('click', () => {
+        isLocked = !isLocked;
+        controls.classList.toggle('ui-hidden', isLocked);
+        lockBtn.innerHTML = isLocked ? 
+            `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` : 
+            `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+        
+        // 锁定后图片层不允许交互，防止意外位移
+        document.getElementById('overlay-container').style.pointerEvents = isLocked ? 'none' : 'auto';
+    });
+
+    // 拖动处理 (简单的单指拖动)
+    let isDragging = false;
+    let startX, startY;
+
+    overlayImg.addEventListener('touchstart', (e) => {
+        if (isLocked) return;
+        isDragging = true;
+        startX = e.touches[0].clientX - posX;
+        startY = e.touches[0].clientY - posY;
+    });
+
+    window.addEventListener('touchmove', (e) => {
+        if (!isDragging || isLocked) return;
+        posX = e.touches[0].clientX - startX;
+        posY = e.touches[0].clientY - startY;
+        updateTransform();
+    });
+
+    window.addEventListener('touchend', () => {
+        isDragging = false;
+    });
+
+    // 初始化
+    window.onload = () => {
+        startCamera();
+        // 设置初始透明度
+        overlayImg.style.opacity = 0.5;
+    };
+</script>
+</body>
+</html>
